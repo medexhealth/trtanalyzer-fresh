@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Forcefully prevent caching -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    
+    <title>TRT Optimization Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://aistudiocdn.com/react@^19.1.1",
+          "react-dom/client": "https://aistudiocdn.com/react-dom@^19.1.1/client"
+        }
+      }
+    </script>
+    <style>
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      .animate-fade-in {
+        animation: fadeIn 0.5s ease-in-out;
+      }
+      @keyframes slideUp {
+        from { transform: translateY(20px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+      .animate-slide-up {
+          animation: slideUp 0.4s ease-out;
+      }
+
+      /* Hide number input spinners for a cleaner UI */
+      input[type=number]::-webkit-inner-spin-button,
+      input[type=number]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      input[type=number] {
+        -moz-appearance: textfield;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React, { useState, useCallback, useEffect } from 'react';
+      import ReactDOM from 'react-dom/client';
+      
+      // --- TYPES ---
+      const InjectionFrequency = {
+        ONCE_A_WEEK: 'Once a week',
+        TWICE_A_WEEK: 'Twice a week',
+        THREE_TIMES_A_WEEK: 'Three times a week or more',
+        OTHER: 'Other',
+      };
+
+      const BloodTestTiming = {
+        PEAK: 'Peak (1-2 days after injection)',
+        MID: 'Mid-cycle (3-5 days after injection)',
+        TROUGH: 'Trough (day of next injection, before injecting)',
+        UNSURE: 'Unsure',
+      };
+
+      const SymptomsList = [
+        'Anxiety', 'Sleep disturbance', 'Heart palpitations', 'High blood pressure',
+        'Chest pain', 'Low libido', 'Erectile dysfunction', 'Fatigue',
+        'Mood swings', 'Acne', 'Water retention', 'None of the above'
+      ];
+
+      // --- SECURE ANALYSIS SERVICE ---
+      const analyzeLabResults = async (formData) => {
+        try {
+          const response = await fetch('/.netlify/functions/analyze', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ formData }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({})); // Gracefully handle non-JSON responses
+            console.error("Backend function error:", errorData);
+            
+            // Provide specific, user-friendly messages for known backend issues.
+            if (errorData.error) {
+              const lowerError = errorData.error.toLowerCase();
+              if (lowerError.includes('api key')) {
+                return "Error: There is a configuration problem with the analysis server. Please try again later.";
+              }
+              if (lowerError.includes('safety settings')) {
+                return "Error: The analysis was blocked by the AI's safety filter. This can happen with medical data. Please adjust your inputs and retry.";
+              }
+            }
+            
+            // Generic fallback for other server errors.
+            return `Error: The analysis service is temporarily unavailable (Status: ${response.status}). Please try again.`;
+          }
+
+          const data = await response.json();
+          // The backend function is designed to only send an error on a non-ok response,
+          // but we check here as a safeguard.
+          if (data.error) {
+            return `Error: ${data.error}`;
+          }
+          
+          return data.result;
+
+        } catch (error) {
+          console.error("Error calling backend function:", error);
+          return "An error occurred while connecting to the analysis service. Please check your internet connection and try again.";
+        }
+      };
+      
+      // --- ICON COMPONENTS ---
+      const ChevronLeftIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M15.75 19.5 8.25 12l7.5-7.5" }));
+      const ChevronRightIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "m8.25 4.5 7.5 7.5-7.5 7.5" }));
+      const SparklesIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" }));
+      const CreditCardIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.5 3.75h15a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 21Z" }));
+      const ShieldCheckIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.286Z" }));
+      const CheckIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" }));
+      
+      // --- UI COMPONENTS ---
+      const StepIndicator = ({ currentStep, totalSteps }) => {
+        return React.createElement("div", { className: "flex justify-center items-center space-x-4 mb-8" }, 
+          ...Array.from({ length: totalSteps }, (_, i) => {
+            const step = i + 1;
+            const isActive = step === currentStep;
+            const isCompleted = step < currentStep;
+            return React.createElement(React.Fragment, { key: step },
+              React.createElement("div", { className: "flex items-center" },
+                React.createElement("div", { className: `w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-300 ${isActive ? 'bg-blue-600 text-white shadow-lg' : isCompleted ? 'bg-green-500 text-white' : 'bg-gray-700 text-gray-400'}` }, isCompleted ? '✓' : step)
+              ),
+              step < totalSteps && React.createElement("div", { className: `h-1 flex-1 transition-all duration-300 ${isCompleted ? 'bg-green-500' : 'bg-gray-700'}` })
+            );
+          })
+        );
+      };
+      
+      const SymptomsSelector = ({ selectedSymptoms, onChange }) => {
+        const handleSymptomToggle = (symptom) => {
+          let newSelection;
+          if (symptom === 'None of the above') {
+            newSelection = selectedSymptoms.includes(symptom) ? [] : ['None of the above'];
+          } else {
+            if (selectedSymptoms.includes(symptom)) {
+              newSelection = selectedSymptoms.filter((s) => s !== symptom);
+            } else {
+              newSelection = [...selectedSymptoms.filter(s => s !== 'None of the above'), symptom];
+            }
+          }
+          onChange(newSelection);
+        };
+        return React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-3" },
+          SymptomsList.map(symptom => React.createElement("button", {
+            key: symptom,
+            type: "button",
+            onClick: () => handleSymptomToggle(symptom),
+            className: `px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-blue-500 ${selectedSymptoms.includes(symptom) ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`
+          }, symptom))
+        );
+      };
+
+      const Markdown = ({ content }) => {
+        // A more robust Markdown parser that handles paragraphs, headings, and lists correctly.
+        const lines = content.split('\n');
+        let html = '';
+        let inList = false;
+
+        const processInline = (text) => text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+        for (const line of lines) {
+            if (line.trim().startsWith('### ')) {
+                if (inList) {
+                    html += '</ul>';
+                    inList = false;
+                }
+                html += `<h3 class="text-xl font-bold text-blue-300 mt-6 mb-3">${processInline(line.trim().substring(4))}</h3>`;
+            } else if (line.trim().startsWith('- ')) {
+                if (!inList) {
+                    html += '<ul class="space-y-2 mt-2 list-outside">';
+                    inList = true;
+                }
+                html += `<li class="ml-5 list-disc">${processInline(line.trim().substring(2))}</li>`;
+            } else if (line.trim().length > 0) {
+                if (inList) {
+                    html += '</ul>';
+                    inList = false;
+                }
+                html += `<p>${processInline(line.trim())}</p>`;
+            }
+        }
+
+        if (inList) {
+            html += '</ul>'; // Close any list that ends the content
+        }
+
+        return React.createElement("div", { className: "space-y-2", dangerouslySetInnerHTML: { __html: html } });
+      };
+
+      const ResultDisplay = ({ result }) => {
+        if (!result) return null;
+        return React.createElement("div", { className: "bg-gray-800 p-6 rounded-lg shadow-xl animate-fade-in" },
+          React.createElement("h2", { className: "text-2xl font-bold text-blue-400 mb-4" }, "Analysis Report"),
+          React.createElement("div", { className: "prose prose-invert max-w-none text-gray-300 leading-relaxed space-y-4" },
+            React.createElement(Markdown, { content: result })
+          )
+        );
+      };
+
+      // --- MAIN APP COMPONENT ---
+      const App = () => {
+        const [appState, setAppState] = useState('FORM');
+        const [currentStep, setCurrentStep] = useState(1);
+        const [analysisSession, setAnalysisSession] = useState(null);
+        const [confirmationUrl, setConfirmationUrl] = useState('');
+        
+        const [formData, setFormData] = useState({
+          injectionFrequency: '',
+          bloodTestTiming: '',
+          labs: { totalTestosterone: '', freeTestosterone: '', estradiol: '', hematocrit: '' },
+          symptoms: [],
+        });
+        const [analysisResult, setAnalysisResult] = useState('');
+        const [error, setError] = useState('');
+
+        const TOTAL_STEPS = 3;
+        const PAYMENT_URL = 'https://buy.stripe.com/5kQeVe2rT6gD9etfqx2Fa01';
+
+        const endSessionAndReset = useCallback(() => {
+          localStorage.removeItem('analysisSession');
+          setAnalysisSession(null);
+          window.location.reload();
+        }, []);
+
+        const processAnalysisResult = useCallback((result, dataToAnalyze, currentSession) => {
+            if (result && result.toLowerCase().startsWith('error:')) {
+                setError(result);
+                setAnalysisResult('');
+                setAppState('AWAITING_PAYMENT'); 
+            } else if (result) {
+                setAnalysisResult(result);
+                const updatedSession = { ...currentSession, result, formData: dataToAnalyze };
+                setAnalysisSession(updatedSession);
+                localStorage.setItem('analysisSession', JSON.stringify(updatedSession));
+                setAppState('RESULT');
+            } else {
+                setError("The analysis returned an empty result. This might be due to a temporary issue with the AI model or a problem with authorization. Please try again.");
+                setAppState('AWAITING_PAYMENT');
+            }
+        }, []);
+        
+        const runAnalysis = useCallback(async (dataToAnalyze, currentSession) => {
+          if (!currentSession) {
+              setError("Your session has expired. Please start a new analysis.");
+              endSessionAndReset();
+              return;
+          }
+          setAppState('ANALYZING');
+          try {
+            const result = await analyzeLabResults(dataToAnalyze);
+            processAnalysisResult(result, dataToAnalyze, currentSession);
+          } catch (err) {
+            setError('An unexpected error occurred during analysis. Please try again.');
+            console.error(err);
+            setAppState('AWAITING_PAYMENT');
+          }
+        }, [endSessionAndReset, processAnalysisResult]);
+
+        useEffect(() => {
+          const urlParams = new URLSearchParams(window.location.search);
+          const stripeSessionId = urlParams.get('session_id');
+          const storedSessionJSON = localStorage.getItem('analysisSession');
+
+          if (stripeSessionId?.startsWith('cs_') && storedSessionJSON) {
+            setAppState('VERIFYING_PAYMENT');
+            window.history.replaceState({}, document.title, window.location.pathname);
+            try {
+              const session = JSON.parse(storedSessionJSON);
+              if (session.expiry > Date.now() && !session.result) {
+                const updatedSession = { ...session, paymentConfirmed: true };
+                localStorage.setItem('analysisSession', JSON.stringify(updatedSession));
+                setAnalysisSession(updatedSession);
+                setFormData(updatedSession.formData);
+                runAnalysis(updatedSession.formData, updatedSession);
+                return;
+              }
+            } catch (e) {
+              console.error("Error handling payment redirect:", e);
+              setAppState('AWAITING_PAYMENT');
+            }
+          }
+          else if (storedSessionJSON) {
+            try {
+              const session = JSON.parse(storedSessionJSON);
+              if (session.expiry > Date.now()) {
+                setAnalysisSession(session);
+                setFormData(session.formData);
+                if (session.result) {
+                  setAnalysisResult(session.result);
+                  setAppState('RESULT');
+                } else if (session.paymentConfirmed) {
+                  runAnalysis(session.formData, session);
+                } else {
+                  setAppState('AWAITING_PAYMENT');
+                }
+              } else {
+                localStorage.removeItem('analysisSession');
+              }
+            } catch (e) {
+              console.error("Failed to parse analysis session:", e);
+              localStorage.removeItem('analysisSession');
+            }
+          }
+        }, [runAnalysis]);
+
+        const handleNext = () => currentStep < TOTAL_STEPS && setCurrentStep(currentStep + 1);
+        const handleBack = () => currentStep > 1 && setCurrentStep(currentStep - 1);
+        const handleLabChange = (e) => setFormData(prev => ({ ...prev, labs: { ...prev.labs, [e.target.name]: e.target.value } }));
+        const handleFrequencyChange = (e) => setFormData(prev => ({ ...prev, injectionFrequency: e.target.value }));
+        const handleTimingChange = (e) => setFormData(prev => ({ ...prev, bloodTestTiming: e.target.value }));
+        const handleSymptomChange = (symptoms) => setFormData(prev => ({ ...prev, symptoms }));
+        
+        const handleFinalizeAndAnalyze = () => {
+          const isPaymentConfirmed = analysisSession?.paymentConfirmed;
+          
+          if (isPaymentConfirmed) {
+              setError('');
+              runAnalysis(formData, analysisSession);
+          } else {
+              const url = confirmationUrl.trim();
+              if (!url) {
+                setError("Please paste the confirmation URL from Stripe to verify your purchase.");
+                return;
+              }
+              
+              const match = url.match(/(cs_(live|test)_[a-zA-Z0-9]+)/);
+              const potentialSessionId = match ? match[0] : null;
+
+              if (potentialSessionId && analysisSession) {
+                setError('');
+                const updatedSession = { ...analysisSession, paymentConfirmed: true };
+                localStorage.setItem('analysisSession', JSON.stringify(updatedSession));
+                setAnalysisSession(updatedSession);
+                runAnalysis(updatedSession.formData, updatedSession);
+              } else {
+                let errorMsg = "Could not find a valid Stripe Session ID in the URL. Please ensure you copied the entire address from the Stripe confirmation page.";
+                if (!analysisSession) {
+                    errorMsg += " Your session may have also expired. Please start over."
+                }
+                setError(errorMsg);
+              }
+          }
+        };
+
+        const handleAttemptAnalysis = () => {
+          if (!formData.labs.freeTestosterone || !formData.labs.estradiol || !formData.labs.hematocrit) {
+            setError('Please fill in at least Free T, Estradiol, and Hematocrit values.');
+            return;
+          }
+          setError('');
+          
+          let sessionToUse = analysisSession;
+          if (!sessionToUse) {
+              const newSession = {
+                  token: crypto.randomUUID(),
+                  expiry: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+                  formData: formData,
+              };
+              setAnalysisSession(newSession);
+              localStorage.setItem('analysisSession', JSON.stringify(newSession));
+              sessionToUse = newSession;
+          } else {
+              const updatedSession = { ...sessionToUse, formData: formData };
+              setAnalysisSession(updatedSession);
+              localStorage.setItem('analysisSession', JSON.stringify(updatedSession));
+              sessionToUse = updatedSession;
+          }
+          
+          if (sessionToUse.paymentConfirmed) {
+              runAnalysis(formData, sessionToUse);
+          } else {
+              setAppState('AWAITING_PAYMENT');
+          }
+        };
+
+        const renderStepContent = () => {
+          switch (currentStep) {
+            case 1: return React.createElement("div", null,
+              React.createElement("h2", { className: "text-2xl font-bold text-center text-gray-100 mb-6" }, "Your Protocol"),
+              React.createElement("div", { className: "space-y-6" },
+                React.createElement("div", null,
+                  React.createElement("label", { htmlFor: "injectionFrequency", className: "block text-sm font-medium text-gray-400 mb-2" }, "How often do you inject testosterone?"),
+                  React.createElement("select", { id: "injectionFrequency", value: formData.injectionFrequency, onChange: handleFrequencyChange, className: "w-full bg-gray-700 border-gray-600 text-white rounded-lg p-3 focus:ring-blue-500 focus:border-blue-500" },
+                    React.createElement("option", { value: "" }, "Select frequency..."),
+                    Object.values(InjectionFrequency).map(freq => React.createElement("option", { key: freq, value: freq }, freq))
+                  )
+                ),
+                React.createElement("div", null,
+                  React.createElement("label", { htmlFor: "bloodTestTiming", className: "block text-sm font-medium text-gray-400 mb-2" }, "When was your blood test relative to your injection?"),
+                  React.createElement("select", { id: "bloodTestTiming", value: formData.bloodTestTiming, onChange: handleTimingChange, className: "w-full bg-gray-700 border-gray-600 text-white rounded-lg p-3 focus:ring-blue-500 focus:border-blue-500" },
+                    React.createElement("option", { value: "" }, "Select timing..."),
+                    Object.values(BloodTestTiming).map(time => React.createElement("option", { key: time, value: time }, time))
+                  )
+                )
+              )
+            );
+            case 2: return React.createElement("div", null,
+              React.createElement("h2", { className: "text-2xl font-bold text-center text-gray-100 mb-6" }, "Your Lab Results"),
+              React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-6" },
+                Object.keys(formData.labs).map(key => {
+                  const labels = {
+                      totalTestosterone: { title: 'Total Testosterone', unit: 'ng/dL', placeholder: 'e.g., 850' },
+                      freeTestosterone: { title: 'Free Testosterone', unit: 'pg/mL', placeholder: 'e.g., 200' },
+                      estradiol: { title: 'Estradiol (Sensitive)', unit: 'pg/mL', placeholder: 'e.g., 35' },
+                      hematocrit: { title: 'Hematocrit', unit: '%', placeholder: 'e.g., 51' },
+                  };
+                  const item = labels[key];
+                  return React.createElement("div", { key: key },
+                    React.createElement("label", { htmlFor: key, className: "block text-sm font-medium text-gray-400 mb-2" }, item.title),
+                    React.createElement("div", { className: "relative" },
+                      React.createElement("input", { type: "number", id: key, name: key, value: formData.labs[key], onChange: handleLabChange, placeholder: item.placeholder, className: "w-full bg-gray-700 border-gray-600 text-white rounded-lg p-3 pr-16 focus:ring-blue-500 focus:border-blue-500 appearance-none" }),
+                      React.createElement("span", { className: "absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400" }, item.unit)
+                    )
+                  );
+                })
+              )
+            );
+            case 3: return React.createElement("div", null,
+              React.createElement("h2", { className: "text-2xl font-bold text-center text-gray-100 mb-6" }, "Your Symptoms"),
+              React.createElement("p", { className: "text-center text-gray-400 mb-4 text-sm" }, "Select any symptoms you're currently experiencing. This helps correlate your lab results with how you feel."),
+              React.createElement(SymptomsSelector, { selectedSymptoms: formData.symptoms, onChange: handleSymptomChange })
+            );
+            default: return null;
+          }
+        };
+        
+        const renderContent = () => {
+            switch(appState) {
+                case 'FORM':
+                    return React.createElement(React.Fragment, null,
+                        React.createElement(StepIndicator, { currentStep: currentStep, totalSteps: TOTAL_STEPS }),
+                        React.createElement("div", { className: "min-h-[300px] flex flex-col justify-center" },
+                            renderStepContent(),
+                            error && React.createElement("div", { className: "mt-6 bg-red-500/10 border border-red-400/30 text-red-300 px-4 py-3 rounded-lg text-center", role: "alert" },
+                                React.createElement("p", { className: "font-bold" }, "Validation Error"),
+                                React.createElement("p", { className: "text-sm" }, error)
+                            )
+                        ),
+                        React.createElement("div", { className: "flex justify-between items-center mt-8" },
+                            React.createElement("button", { onClick: handleBack, disabled: currentStep === 1, className: "flex items-center gap-2 px-6 py-2 bg-gray-600 rounded-lg hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all" },
+                                React.createElement(ChevronLeftIcon, { className: "w-5 h-5" }), "Back"
+                            ),
+                            currentStep < TOTAL_STEPS ?
+                            React.createElement("button", { onClick: handleNext, className: "flex items-center gap-2 px-6 py-2 bg-blue-600 rounded-lg hover:bg-blue-500 transition-all" },
+                                "Next", React.createElement(ChevronRightIcon, { className: "w-5 h-5" })
+                            ) :
+                            React.createElement("button", { onClick: handleAttemptAnalysis, className: "flex items-center gap-2 px-6 py-2 bg-green-600 rounded-lg hover:bg-green-500 font-bold transition-all shadow-lg" },
+                                React.createElement(SparklesIcon, { className: "w-5 h-5" }), "Analyze Results"
+                            )
+                        )
+                    );
+                case 'AWAITING_PAYMENT': {
+                     const isPaymentConfirmed = analysisSession?.paymentConfirmed;
+                     const buttonText = isPaymentConfirmed ? "Show My Analysis" : "Verify & Show My Analysis";
+                     const isButtonDisabled = !isPaymentConfirmed && !confirmationUrl.trim();
+
+                     return React.createElement("div", { className: "flex flex-col items-center justify-center text-center animate-fade-in" },
+                        React.createElement(SparklesIcon, { className: "w-12 h-12 mx-auto text-yellow-400 mb-4" }),
+                        React.createElement("h2", { className: "text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-teal-400 mb-2" }, "Unlock Full Analysis"),
+                        React.createElement("p", { className: "text-gray-400 mb-6 max-w-md mx-auto" }, "Get your personalized, AI-powered report based on years of clinical insights."),
+                        React.createElement("div", { className: "bg-gray-900/50 p-6 rounded-lg w-full max-w-md text-left mb-6" },
+                          React.createElement("ul", { className: "space-y-4" },
+                            React.createElement("li", { className: "flex items-start" }, React.createElement(CheckIcon, { className: "w-6 h-6 text-green-400 mr-3 flex-shrink-0 mt-1" }), React.createElement("span", { className: "text-gray-300" }, React.createElement("strong", null, "In-depth Lab Interpretation:"), " Understand what your Total T, Free T, Estradiol, and Hematocrit levels mean for you.")),
+                            React.createElement("li", { className: "flex items-start" }, React.createElement(CheckIcon, { className: "w-6 h-6 text-green-400 mr-3 flex-shrink-0 mt-1" }), React.createElement("span", { className: "text-gray-300" }, React.createElement("strong", null, "Symptom Correlation:"), " Connect the dots between how you feel and what your lab work shows.")),
+                            React.createElement("li", { className: "flex items-start" }, React.createElement(CheckIcon, { className: "w-6 h-6 text-green-400 mr-3 flex-shrink-0 mt-1" }), React.createElement("span", { className: "text-gray-300" }, React.createElement("strong", null, "Potential Discussion Points:"), " Receive key questions and topics to discuss with your doctor to optimize your protocol.")))
+                        ),
+                        React.createElement("a", { href: PAYMENT_URL, target: "_blank", rel: "noopener noreferrer", className: "block w-full max-w-md text-center bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded-lg text-lg transition-all shadow-lg transform hover:scale-105" }, "Unlock Now - One-Time Fee ", React.createElement("span", { className: "font-normal opacity-90" }, "$5.99")),
+                        React.createElement("p", { className: "text-xs text-gray-500 mt-3 text-center" }, "You'll be directed to Stripe to complete your purchase in a new tab."),
+                        React.createElement("div", { className: "w-full border-t border-gray-700 my-8" }),
+                        React.createElement(CreditCardIcon, { className: "w-10 h-10 text-blue-400 mb-3" }),
+                        React.createElement("h3", { className: "text-xl font-bold text-gray-100 mb-2" }, "Manual Recovery"),
+                        React.createElement("p", { className: "text-gray-400 max-w-lg mx-auto mb-6" }, 
+                           isPaymentConfirmed 
+                           ? "Your payment is confirmed! Click below to get your analysis."
+                           : "If you've already paid, paste the full Stripe URL from your address bar below to verify your purchase and unlock your analysis."
+                        ),
+                        React.createElement("div", { className: "w-full max-w-sm mx-auto mt-2 space-y-4" },
+                          !isPaymentConfirmed && React.createElement("div", null,
+                            React.createElement("label", { htmlFor: "confirmationUrl", className: "block text-sm font-medium text-gray-300 mb-2" }, "Paste the full Stripe URL from your address bar:"),
+                            React.createElement("input", { type: "text", id: "confirmationUrl", value: confirmationUrl, onChange: (e) => setConfirmationUrl(e.target.value), placeholder: 'https://buy.stripe.com/...', className: "w-full bg-gray-700 border-gray-600 text-white rounded-lg p-3 text-center focus:ring-blue-500 focus:border-blue-500" })
+                          )
+                        ),
+                        error && React.createElement("div", { className: "mt-4 max-w-sm mx-auto bg-red-500/10 border border-red-400/30 text-red-300 px-4 py-2 rounded-lg text-sm", role: "alert" }, error),
+                        React.createElement("button", { onClick: handleFinalizeAndAnalyze, disabled: isButtonDisabled, className: "mt-6 w-full max-w-sm mx-auto flex items-center justify-center gap-2 px-8 py-3 bg-blue-600 rounded-lg hover:bg-blue-500 font-bold transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed" },
+                            React.createElement(ShieldCheckIcon, { className: "w-5 h-5" }), buttonText
+                        )
+                    );
+                }
+                case 'VERIFYING_PAYMENT':
+                    return React.createElement("div", { className: "flex flex-col items-center justify-center min-h-[300px] text-center animate-fade-in" },
+                        React.createElement(ShieldCheckIcon, { className: "w-16 h-16 text-green-400 mb-4" }),
+                        React.createElement("h2", { className: "text-2xl font-bold text-gray-100 mb-2" }, "Verifying Your Purchase..."),
+                        React.createElement("p", { className: "text-gray-400 max-w-lg mx-auto" }, "Thank you! We're confirming your payment and preparing your analysis. This should only take a moment.")
+                    );
+                case 'ANALYZING':
+                    return React.createElement("div", { className: "flex flex-col items-center justify-center min-h-[300px] text-center" },
+                        React.createElement("div", { className: "animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400 mb-4" }),
+                        React.createElement("h2", { className: "text-xl font-semibold text-gray-200" }, "Analyzing your data..."),
+                        React.createElement("p", { className: "text-gray-400" }, "The AI is reviewing your labs and symptoms. Please wait a moment.")
+                    );
+                case 'RESULT':
+                    return analysisResult && React.createElement("div", { className: "animate-fade-in" },
+                        React.createElement(ResultDisplay, { result: analysisResult }),
+                        React.createElement("button", { onClick: endSessionAndReset, className: "mt-8 w-full px-6 py-3 bg-blue-600 rounded-lg hover:bg-blue-500 font-bold transition-all" }, "Clear and Start New Analysis"),
+                        React.createElement("p", { className: "text-center text-gray-500 text-xs mt-3" }, "This will permanently delete your current report and session, allowing you to test the entire process again from the beginning.")
+                    );
+                default:
+                    return null;
+            }
+        };
+
+        return React.createElement("div", { className: "bg-gray-900 min-h-screen text-white font-sans p-4 sm:p-6 lg:p-8" },
+          React.createElement("div", { className: "max-w-4xl mx-auto" },
+            React.createElement("header", { className: "text-center mb-10" },
+              React.createElement("h1", { className: "text-4xl sm:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-teal-400 pb-2" }, "TRT Optimization Assistant"),
+              React.createElement("p", { className: "text-gray-400 max-w-2xl mx-auto" }, "Get AI-powered \"Dr T insights\" on your results to help optimize your TRT with your doctor.")
+            ),
+            React.createElement("main", { className: "bg-gray-800/50 backdrop-blur-sm rounded-2xl shadow-2xl p-6 sm:p-8 border border-gray-700" },
+              renderContent()
+            ),
+             React.createElement("footer", { className: "text-center mt-4" },
+              React.createElement("p", { className: "text-xs text-gray-600" }, "Version 3.0 - Secure Backend")
+            )
+          )
+        );
+      };
+      
+      // --- RENDER THE APP ---
+      const rootElement = document.getElementById('root');
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(React.createElement(App));
+    </script>
+  </body>
+</html>
